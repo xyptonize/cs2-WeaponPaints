@@ -202,11 +202,21 @@ namespace WeaponPaints
 
 		private HookResult OnGiveNamedItemPost(DynamicHook hook)
 		{
+			// This runs inside a native DynoHook callback: a null dereference here is NOT a catchable
+			// NullReferenceException, it is a SIGSEGV that kills the server (the try/catch below never runs).
+			// GiveNamedItem returns NULL when the engine refuses the item - e.g. MatchZy's !restore makes the
+			// engine re-give each player's backed-up inventory by designer name ("weapon_knife_karambit"),
+			// which it refuses. So check the raw pointers before wrapping them in schema classes.
 			try
 			{
-				var itemServices = hook.GetParam<CCSPlayer_ItemServices>(0);
-				var weapon = hook.GetReturn<CBasePlayerWeapon>();
-				if (!weapon.DesignerName.Contains("weapon"))
+				var weaponPtr = hook.GetReturn<nint>();
+				var itemServicesPtr = hook.GetParam<nint>(0);
+				if (weaponPtr == 0 || itemServicesPtr == 0)
+					return HookResult.Continue;
+
+				var itemServices = new CCSPlayer_ItemServices(itemServicesPtr);
+				var weapon = new CBasePlayerWeapon(weaponPtr);
+				if (!weapon.IsValid || weapon.DesignerName is not { } designerName || !designerName.Contains("weapon"))
 					return HookResult.Continue;
 
 				var player = GetPlayerFromItemServices(itemServices);

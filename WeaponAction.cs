@@ -566,7 +566,7 @@ namespace WeaponPaints
 		private static CCSPlayerController? GetPlayerFromItemServices(CCSPlayer_ItemServices itemServices)
 		{
 			var pawn = itemServices.Pawn.Value;
-			if (!pawn.IsValid || !pawn.Controller.IsValid || pawn.Controller.Value == null) return null;
+			if (pawn == null || !pawn.IsValid || !pawn.Controller.IsValid || pawn.Controller.Value == null) return null;
 			var player = new CCSPlayerController(pawn.Controller.Value.Handle);
 			return !Utility.IsPlayerValid(player) ? null : player;
 		}
