@@ -505,17 +505,27 @@ namespace WeaponPaints
 			if (player.IsBot) return;
 			if (!GPlayersMusic.TryGetValue(player.Slot, out var musicInfo) ||
 			    !musicInfo.TryGetValue(player.Team, out var musicId) || musicId == 0) return;
-			
-			if (player.InventoryServices == null) return;
 
-			player.MusicKitID = musicId;
-			// player.MvpNoMusic = false;
-			player.InventoryServices.MusicID = musicId;
-			Utilities.SetStateChanged(player, "CCSPlayerController", "m_iMusicKitID");
-			// Utilities.SetStateChanged(player, "CCSPlayerController", "m_bMvpNoMusic");
-			Utilities.SetStateChanged(player, "CCSPlayerController", "m_pInventoryServices");
-			// player.MusicKitMVPs = musicId;
-			// Utilities.SetStateChanged(player, "CCSPlayerController", "m_iMusicKitMVPs");
+			// Called every snapshot (CheckTransmit) - only write and mark fields that actually differ.
+			var inventory = player.InventoryServices;
+			if (inventory != null && inventory.MusicID != musicId)
+			{
+				inventory.MusicID = musicId;
+				Utilities.SetStateChanged(player, "CCSPlayerController", "m_pInventoryServices");
+			}
+
+			if (player.MusicKitID != musicId)
+			{
+				player.MusicKitID = musicId;
+				Utilities.SetStateChanged(player, "CCSPlayerController", "m_iMusicKitID");
+			}
+
+			if (player.MvpNoMusic)
+			{
+				player.MvpNoMusic = false;
+				Utilities.SetStateChanged(player, "CCSPlayerController", "m_bMvpNoMusic");
+			}
+			// m_iMusicKitMVPs is the StatTrak MVP COUNT, not a kit id - left to the engine.
 		}
 
 		private static void GivePlayerPin(CCSPlayerController player)

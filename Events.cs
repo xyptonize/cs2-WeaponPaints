@@ -10,7 +10,6 @@ namespace WeaponPaints
 {
 	public partial class WeaponPaints
 	{
-		private bool _mvpPlayed;
 		
 		[GameEventHandler]
 		public HookResult OnClientFullConnect(EventPlayerConnectFull @event, GameEventInfo info)
@@ -164,17 +163,19 @@ namespace WeaponPaints
 		private HookResult OnRoundStart(EventRoundStart @event, GameEventInfo info)
 		{
 			_gBCommandsAllowed = true;
-			_mvpPlayed = false;
 			return HookResult.Continue;
 		}
 		
+		// round_mvp must be edited in a PRE hook. RegisterEventHandler defaults to HookMode.Post, which runs
+		// after the engine has already broadcast the event: the client started the anthem named by the ORIGINAL
+		// musickitid (the player's real inventory kit, i.e. the default one) and DontBroadcast had no effect.
+		// The old code then re-fired a second round_mvp carrying the chosen kit - the MVP panel showed it, but
+		// the music was already playing, and every other plugin (LannRanks) counted the MVP twice.
+		// Nereziel/cs2-WeaponPaints#252. Now: fix the controller fields and rewrite the one event in place.
 		private HookResult OnRoundMvp(EventRoundMvp @event, GameEventInfo info)
 		{
-			if (_mvpPlayed)
-				return HookResult.Continue;
-			
 			var player = @event.Userid;
-			
+
 			if (player == null || !player.IsValid || player.IsBot)
 				return HookResult.Continue;
 
@@ -182,22 +183,31 @@ namespace WeaponPaints
 			      && musicInfo.TryGetValue(player.Team, out var musicId)
 			      && musicId != 0))
 				return HookResult.Continue;
-					
+
+			GivePlayerMusicKit(player);
 			@event.Musickitid = musicId;
 			@event.Nomusic = 0;
-			info.DontBroadcast = true;
-			
-			var newEvent = new EventRoundMvp(true)
-			{
-				Userid = player,
-				Musickitid = musicId,
-				Nomusic = 0,
-			};
-
-			_mvpPlayed = true;
-			
-			newEvent.FireEvent(false);
 			return HookResult.Continue;
+		}
+
+		// The engine rewrites the controller's music kit fields from the real inventory on its own schedule
+		// (connect, spawn, team change, round boundary). The client reads m_iMusicKitID for the round-start,
+		// bomb and round-end cues, so re-assert the chosen kit right before every snapshot. Compare-then-write:
+		// normally a few field reads per human, a network update only when Valve reset something.
+		private void OnCheckTransmitMusic(CCheckTransmitInfoList infoList)
+		{
+			if (GPlayersMusic.IsEmpty) return;
+			try
+			{
+				foreach (var player in Utilities.GetPlayers())
+				{
+					if (player is not { IsValid: true, IsBot: false, IsHLTV: false }) continue;
+					GivePlayerMusicKit(player);
+				}
+			}
+			catch (Exception)
+			{
+			}
 		}
 
 		private HookResult OnGiveNamedItemPost(DynamicHook hook)
@@ -349,7 +359,9 @@ namespace WeaponPaints
 			RegisterEventHandler<EventPlayerSpawn>(OnPlayerSpawn);
 			RegisterEventHandler<EventRoundStart>(OnRoundStart);
 			RegisterEventHandler<EventRoundEnd>(OnRoundEnd);
-			RegisterEventHandler<EventRoundMvp>(OnRoundMvp);
+			RegisterEventHandler<EventRoundMvp>(OnRoundMvp, HookMode.Pre);
+			if (Config.Additional.MusicEnabled)
+				RegisterListener<Listeners.CheckTransmit>(OnCheckTransmitMusic);
 			RegisterListener<Listeners.OnEntitySpawned>(OnEntityCreated);
 			RegisterEventHandler<EventPlayerDeath>(OnPlayerDeath);
 
