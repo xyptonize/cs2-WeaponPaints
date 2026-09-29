@@ -31,7 +31,11 @@ namespace WeaponPaints
 
 			try
 			{
-				_ = Task.Run(async () => await WeaponSync.GetPlayerData(playerInfo));
+				_ = Task.Run(async () =>
+				{
+					await WeaponSync.GetPlayerData(playerInfo);
+					Server.NextFrame(() => RefreshAfterLoad(playerInfo));
+				});
 				/*
 				if (Config.Additional.SkinEnabled)
 				{
@@ -70,6 +74,8 @@ namespace WeaponPaints
 			CCSPlayerController? player = @event.Userid;
 
 			if (player is null || !player.IsValid || player.IsBot) return HookResult.Continue;
+
+			_refreshAfterLoadPending.Remove(player.Slot);
 
 			var playerInfo = new PlayerInfo
 			{
@@ -129,6 +135,43 @@ namespace WeaponPaints
 
 			_fadeSeed = 0;
 			_nextItemId = MinimumCustomItemId;
+			_refreshAfterLoadPending.Clear();
+		}
+
+		// LANN: a player who reconnects mid-match takes back a pawn that is already alive ("ClientPutInServer reconnecting
+		// player controller"), holding weapons the engine gave while they were away - unpainted, because skins are only
+		// applied when a weapon is given. Nothing re-gives them until that player dies, so the skins stayed off until !wp
+		// (MATCH #40, 2026-09-29). Anyone who spawns before their data has loaded is in the same state. Once the data is in,
+		// refresh a living player the way !wp does; between round end and round start (refresh blocked) wait for the round.
+		private readonly Dictionary<int, string> _refreshAfterLoadPending = [];
+
+		private void RefreshAfterLoad(PlayerInfo info)
+		{
+			var player = Utilities.GetPlayerFromSlot(info.Slot);
+			if (player is not { IsValid: true, IsBot: false } || player.SteamID.ToString() != info.SteamId) return;
+			if ((LifeState_t)player.LifeState != LifeState_t.LIFE_ALIVE) return; // not spawned yet: the normal give paints it
+			if (!_gBCommandsAllowed)
+			{
+				_refreshAfterLoadPending[info.Slot] = info.SteamId ?? "";
+				return;
+			}
+			RefreshLikeWp(player);
+		}
+
+		private void RefreshLikeWp(CCSPlayerController player)
+		{
+			try
+			{
+				GivePlayerGloves(player);
+				if (Config.Additional.SkinEnabled || Config.Additional.KnifeEnabled) RefreshWeapons(player);
+				GivePlayerAgent(player);
+				GivePlayerMusicKit(player);
+				AddTimer(0.15f, () => { if (player.IsValid) GivePlayerPin(player); });
+			}
+			catch (Exception ex)
+			{
+				Logger.LogWarning("refresh after load failed: " + ex.Message);
+			}
 		}
 
 		private HookResult OnPlayerSpawn(EventPlayerSpawn @event, GameEventInfo info)
@@ -163,6 +206,18 @@ namespace WeaponPaints
 		private HookResult OnRoundStart(EventRoundStart @event, GameEventInfo info)
 		{
 			_gBCommandsAllowed = true;
+			if (_refreshAfterLoadPending.Count > 0)
+			{
+				var pending = _refreshAfterLoadPending.ToArray();
+				_refreshAfterLoadPending.Clear();
+				foreach (var (slot, steamId) in pending)
+				{
+					var p = Utilities.GetPlayerFromSlot(slot);
+					if (p is { IsValid: true, IsBot: false } && p.SteamID.ToString() == steamId &&
+					    (LifeState_t)p.LifeState == LifeState_t.LIFE_ALIVE)
+						RefreshLikeWp(p);
+				}
+			}
 			return HookResult.Continue;
 		}
 		
