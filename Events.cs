@@ -147,11 +147,6 @@ namespace WeaponPaints
 
 		private void OnMapStart(string mapName)
 		{
-			if (Config.Additional is { KnifeEnabled: false, SkinEnabled: false, GloveEnabled: false }) return;
-			
-			if (Database != null)
-				WeaponSync = new WeaponSynchronization(Database, Config);
-
 			_fadeSeed = 0;
 			_nextItemId = MinimumCustomItemId;
 			_refreshAfterLoadPending.Clear();
