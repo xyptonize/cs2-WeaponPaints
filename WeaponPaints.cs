@@ -24,6 +24,7 @@ public partial class WeaponPaints : BasePlugin, IPluginConfig<WeaponPaintsConfig
 
 	public override void Load(bool hotReload)
 	{
+		RegisterLannCapabilities(); // LANN: lann:wp:paint for the HUD's finish picker (LannCapabilities.cs)
 		// Hardcoded hotfix needs to be changed later (Not needed 17.09.2025)
 		//if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
 		//	Patch.PerformPatch("0F 85 ? ? ? ? 31 C0 B9 ? ? ? ? BA ? ? ? ? 66 0F EF C0 31 F6 31 FF 48 C7 45 ? ? ? ? ? 48 C7 45 ? ? ? ? ? 48 C7 45 ? ? ? ? ? 48 C7 45 ? ? ? ? ? 0F 29 45 ? 48 C7 45 ? ? ? ? ? C7 45 ? ? ? ? ? 66 89 45 ? E8 ? ? ? ? 41 89 C5 85 C0 0F 8E", "90 90 90 90 90 90");
