@@ -13,20 +13,167 @@ namespace WeaponPaints;
 /// Typed with CounterStrikeSharp and BCL types only, so the consumer needs no shared assembly:
 /// <c>"lann:wp:paint"  Func&lt;CCSPlayerController, int, int, int, bool&gt; = (player, team, defindex, paint) -&gt; stored</c>.
 /// team: 2 = T, 3 = CT, 0 = both; paint 0 = Default (no finish). Game thread only; never throws into the caller.
+/// Two more for the knife and glove models (LannMenu 1.5), built on this plugin's own knife and gloves menus:
+/// <c>"lann:wp:knife"  Func&lt;CCSPlayerController, int, string, bool&gt; = (player, team, knifeClass)</c> and
+/// <c>"lann:wp:gloves" Func&lt;CCSPlayerController, int, int, int, bool&gt; = (player, team, gloveDefindex, paint)</c>.
 /// </summary>
 public partial class WeaponPaints
 {
 	private const string LannPaintCapabilityName = "lann:wp:paint";
+	private const string LannKnifeCapabilityName = "lann:wp:knife";
+	private const string LannGlovesCapabilityName = "lann:wp:gloves";
 	private const double LannPaintCooldownSeconds = 1.0;
+	private const double LannModelCooldownSeconds = 0.5;
 
 	private static readonly PluginCapability<Func<CCSPlayerController, int, int, int, bool>> LannPaintCapability =
 		new(LannPaintCapabilityName);
 
+	private static readonly PluginCapability<Func<CCSPlayerController, int, string, bool>> LannKnifeCapability =
+		new(LannKnifeCapabilityName);
+
+	private static readonly PluginCapability<Func<CCSPlayerController, int, int, int, bool>> LannGlovesCapability =
+		new(LannGlovesCapabilityName);
+
 	private static readonly ConcurrentDictionary<int, DateTime> LannPaintCooldown = new();
+	private static readonly ConcurrentDictionary<int, DateTime> LannModelCooldown = new();
 
 	private void RegisterLannCapabilities()
 	{
 		Capabilities.RegisterPluginCapability(LannPaintCapability, () => LannSetPaint);
+		Capabilities.RegisterPluginCapability(LannKnifeCapability, () => LannSetKnife);
+		Capabilities.RegisterPluginCapability(LannGlovesCapability, () => LannSetGloves);
+	}
+
+	private static CsTeam[] LannTeams(int team) =>
+		team == 0 ? [CsTeam.Terrorist, CsTeam.CounterTerrorist] : [(CsTeam)team];
+
+	private static PlayerInfo LannPlayerInfo(CCSPlayerController player) => new()
+	{
+		UserId = player.UserId,
+		Slot = player.Slot,
+		Index = (int)player.Index,
+		SteamId = player.SteamID.ToString(),
+		Name = player.PlayerName,
+		IpAddress = player.IpAddress?.Split(":")[0]
+	};
+
+	private static bool LannCooldownPassed(ConcurrentDictionary<int, DateTime> cooldown, int slot, double seconds)
+	{
+		DateTime now = DateTime.UtcNow;
+		if (cooldown.TryGetValue(slot, out DateTime until) && now < until)
+		{
+			return false;
+		}
+
+		cooldown[slot] = now.AddSeconds(seconds);
+		return true;
+	}
+
+	/// <summary>
+	/// The knife model, as this plugin's knife menu sets it (SetupKnifeMenu): <paramref name="knifeClass"/> must be one of
+	/// its knives (weapon_knife*, weapon_bayonet; weapon_knife is the default knife) and the knife feature on. Stored for
+	/// the team, weapons re-given when alive, the database synced in the background; the knife keeps its own finishes.
+	/// </summary>
+	private bool LannSetKnife(CCSPlayerController player, int team, string knifeClass)
+	{
+		try
+		{
+			if (!Utility.IsPlayerValid(player) || WeaponSync == null || !Config.Additional.KnifeEnabled ||
+			    team is not (0 or 2 or 3) || string.IsNullOrEmpty(knifeClass) ||
+			    !(knifeClass.StartsWith("weapon_knife") || knifeClass.StartsWith("weapon_bayonet")) ||
+			    !WeaponList.ContainsKey(knifeClass) ||
+			    !LannCooldownPassed(LannModelCooldown, player.Slot, LannModelCooldownSeconds))
+			{
+				return false;
+			}
+
+			CsTeam[] teams = LannTeams(team);
+			var playerKnives = GPlayersKnife.GetOrAdd(player.Slot, _ => new ConcurrentDictionary<CsTeam, string>());
+			foreach (CsTeam side in teams)
+			{
+				playerKnives[side] = knifeClass;
+			}
+
+			PlayerInfo playerInfo = LannPlayerInfo(player);
+			if (_gBCommandsAllowed && (LifeState_t)player.LifeState == LifeState_t.LIFE_ALIVE)
+			{
+				RefreshWeapons(player);
+			}
+
+			_ = Task.Run(async () =>
+			{
+				try
+				{
+					await WeaponSync.SyncKnifeToDatabase(playerInfo, knifeClass, teams);
+				}
+				catch (Exception ex)
+				{
+					Utility.Log($"lann:wp:knife sync failed: {ex.Message}");
+				}
+			});
+			return true;
+		}
+		catch (Exception ex)
+		{
+			Logger.LogWarning("lann:wp:knife failed: {Type}", ex.GetType().Name);
+			return false;
+		}
+	}
+
+	/// <summary>
+	/// The gloves, as this plugin's gloves menu sets them (SetupGlovesMenu): (<paramref name="gloveDefindex"/>,
+	/// <paramref name="paint"/>) must be one of its glove finishes (paint &gt; 0). The glove type and its finish are stored for
+	/// the team at once (the menu sets the finish later, inside its database task), the gloves re-given 0.1 and 0.25 s
+	/// later, the database synced in the background. Default gloves are not set here (false).
+	/// </summary>
+	private bool LannSetGloves(CCSPlayerController player, int team, int gloveDefindex, int paint)
+	{
+		try
+		{
+			if (!Utility.IsPlayerValid(player) || WeaponSync == null || team is not (0 or 2 or 3) || gloveDefindex <= 0 ||
+			    paint <= 0 || !GlovesList.Any(g => ((int?)g["weapon_defindex"] ?? 0) == gloveDefindex && ((int?)g["paint"] ?? 0) == paint) ||
+			    !LannCooldownPassed(LannModelCooldown, player.Slot, LannModelCooldownSeconds))
+			{
+				return false;
+			}
+
+			CsTeam[] teams = LannTeams(team);
+			var playerGloves = GPlayersGlove.GetOrAdd(player.Slot, _ => new ConcurrentDictionary<CsTeam, ushort>());
+			var playerSkins = GPlayerWeaponsInfo.GetOrAdd(player.Slot,
+				_ => new ConcurrentDictionary<CsTeam, ConcurrentDictionary<int, WeaponInfo>>());
+			foreach (CsTeam side in teams)
+			{
+				playerGloves[side] = (ushort)gloveDefindex;
+				var teamWeapons = playerSkins.GetOrAdd(side, _ => new ConcurrentDictionary<int, WeaponInfo>());
+				WeaponInfo info = teamWeapons.GetOrAdd(gloveDefindex, _ => new WeaponInfo());
+				info.Paint = paint;
+				info.Wear = 0.00f;
+				info.Seed = 0;
+			}
+
+			PlayerInfo playerInfo = LannPlayerInfo(player);
+			_ = Task.Run(async () =>
+			{
+				try
+				{
+					await WeaponSync.SyncGloveToDatabase(playerInfo, (ushort)gloveDefindex, teams);
+					await WeaponSync.SyncWeaponPaintsToDatabase(playerInfo);
+				}
+				catch (Exception ex)
+				{
+					Utility.Log($"lann:wp:gloves sync failed: {ex.Message}");
+				}
+			});
+			// Re-checked before each re-give: the player may have left in between (GivePlayerGloves dereferences the pawn).
+			AddTimer(0.1f, () => { if (Utility.IsPlayerValid(player) && player.PlayerPawn.Value != null) GivePlayerGloves(player); });
+			AddTimer(0.25f, () => { if (Utility.IsPlayerValid(player) && player.PlayerPawn.Value != null) GivePlayerGloves(player); });
+			return true;
+		}
+		catch (Exception ex)
+		{
+			Logger.LogWarning("lann:wp:gloves failed: {Type}", ex.GetType().Name);
+			return false;
+		}
 	}
 
 	/// <summary>
