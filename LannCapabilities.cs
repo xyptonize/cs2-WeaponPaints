@@ -16,12 +16,15 @@ namespace WeaponPaints;
 /// Two more for the knife and glove models (LannMenu 1.5), built on this plugin's own knife and gloves menus:
 /// <c>"lann:wp:knife"  Func&lt;CCSPlayerController, int, string, bool&gt; = (player, team, knifeClass)</c> and
 /// <c>"lann:wp:gloves" Func&lt;CCSPlayerController, int, int, int, bool&gt; = (player, team, gloveDefindex, paint)</c>.
+/// And the agent (LannMenu 1.6), built on this plugin's own agents menu:
+/// <c>"lann:wp:agent"  Func&lt;CCSPlayerController, int, string, bool&gt; = (player, team, model)</c>.
 /// </summary>
 public partial class WeaponPaints
 {
 	private const string LannPaintCapabilityName = "lann:wp:paint";
 	private const string LannKnifeCapabilityName = "lann:wp:knife";
 	private const string LannGlovesCapabilityName = "lann:wp:gloves";
+	private const string LannAgentCapabilityName = "lann:wp:agent";
 	private const double LannPaintCooldownSeconds = 1.0;
 	private const double LannModelCooldownSeconds = 0.5;
 
@@ -34,6 +37,9 @@ public partial class WeaponPaints
 	private static readonly PluginCapability<Func<CCSPlayerController, int, int, int, bool>> LannGlovesCapability =
 		new(LannGlovesCapabilityName);
 
+	private static readonly PluginCapability<Func<CCSPlayerController, int, string, bool>> LannAgentCapability =
+		new(LannAgentCapabilityName);
+
 	private static readonly ConcurrentDictionary<int, DateTime> LannPaintCooldown = new();
 	private static readonly ConcurrentDictionary<int, DateTime> LannModelCooldown = new();
 
@@ -42,6 +48,7 @@ public partial class WeaponPaints
 		Capabilities.RegisterPluginCapability(LannPaintCapability, () => LannSetPaint);
 		Capabilities.RegisterPluginCapability(LannKnifeCapability, () => LannSetKnife);
 		Capabilities.RegisterPluginCapability(LannGlovesCapability, () => LannSetGloves);
+		Capabilities.RegisterPluginCapability(LannAgentCapability, () => LannSetAgent);
 	}
 
 	private static CsTeam[] LannTeams(int team) =>
@@ -116,6 +123,62 @@ public partial class WeaponPaints
 		catch (Exception ex)
 		{
 			Logger.LogWarning("lann:wp:knife failed: {Type}", ex.GetType().Name);
+			return false;
+		}
+	}
+
+	/// <summary>
+	/// The agent, as this plugin's agents menu sets it (SetupAgentsMenu): <paramref name="model"/> is the agents file's model
+	/// for <paramref name="team"/> (2 = T, 3 = CT; agents belong to one team), "null" or "" = the map's default agent. Stored
+	/// for that team and synced to the database in the background. Applied at once when the player is alive on that team and
+	/// commands are allowed (the menu waits for the next spawn); the default agent comes back at the next spawn.
+	/// </summary>
+	private bool LannSetAgent(CCSPlayerController player, int team, string model)
+	{
+		try
+		{
+			if (!Utility.IsPlayerValid(player) || WeaponSync == null || !Config.Additional.AgentEnabled || team is not (2 or 3) ||
+			    model is null || !LannCooldownPassed(LannModelCooldown, player.Slot, LannModelCooldownSeconds))
+			{
+				return false;
+			}
+
+			string wanted = model.Length == 0 ? "null" : model;
+			var agent = AgentsList.FirstOrDefault(a =>
+				a["model"]?.ToString() == wanted && a["team"] != null && (int)a["team"]! == team);
+			if (agent == null)
+			{
+				return false;
+			}
+
+			string? stored = wanted == "null" ? null : wanted;
+			GPlayersAgent.AddOrUpdate(player.Slot,
+				_ => team == 3 ? (stored, null) : (null, stored),
+				(_, old) => team == 3 ? (stored, old.T) : (old.CT, stored));
+
+			if (stored != null && _gBCommandsAllowed && player.TeamNum == team &&
+			    (LifeState_t)player.LifeState == LifeState_t.LIFE_ALIVE)
+			{
+				GivePlayerAgent(player);
+			}
+
+			PlayerInfo playerInfo = LannPlayerInfo(player);
+			_ = Task.Run(async () =>
+			{
+				try
+				{
+					await WeaponSync.SyncAgentToDatabase(playerInfo);
+				}
+				catch (Exception ex)
+				{
+					Utility.Log($"lann:wp:agent sync failed: {ex.Message}");
+				}
+			});
+			return true;
+		}
+		catch (Exception ex)
+		{
+			Logger.LogWarning("lann:wp:agent failed: {Type}", ex.GetType().Name);
 			return false;
 		}
 	}
