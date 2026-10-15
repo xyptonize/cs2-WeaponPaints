@@ -399,7 +399,7 @@ namespace WeaponPaints
 					if (!player.IsValid)
 						return;
 
-					if (!player.PawnIsAlive)
+					if (!player.PawnIsAlive || !pawn.IsValid)
 						return;
 
 					if (!GPlayersGlove.TryGetValue(player.Slot, out var gloveInfo) ||
@@ -427,7 +427,8 @@ namespace WeaponPaints
 					//force gloves model refresh to prevent model overlap
 					player.ExecuteClientCommand("lastinv");
 					SetBodygroup(pawn, "first_or_third_person", 0);
-					AddTimer(0.2f, () => SetBodygroup(pawn, "first_or_third_person", 1), TimerFlags.STOP_ON_MAPCHANGE);
+					// the pawn can be gone 0.2 s later (death, disconnect): CSS then logs "Entity is not valid" on every such glove change
+					AddTimer(0.2f, () => { if (pawn.IsValid) SetBodygroup(pawn, "first_or_third_person", 1); }, TimerFlags.STOP_ON_MAPCHANGE);
 				}
 				catch (Exception) { }
 			}, TimerFlags.STOP_ON_MAPCHANGE);
