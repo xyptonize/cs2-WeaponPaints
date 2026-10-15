@@ -17,7 +17,8 @@ internal class WeaponSynchronization
 		_config = config;
 	}
 
-	internal async Task GetPlayerData(PlayerInfo? player)
+	/// <summary>Loads everything for one player. False when the database could not be reached (the caller retries).</summary>
+	internal async Task<bool> GetPlayerData(PlayerInfo? player)
 	{
 		try
 		{
@@ -35,11 +36,13 @@ internal class WeaponSynchronization
 				GetWeaponPaintsFromDatabase(player, connection);
 			if (_config.Additional.PinsEnabled)
 				GetPinsFromDatabase(player, connection);
+			return true;
 		}
 		catch (Exception ex)
 		{
 			// Log the exception or handle it appropriately
 			Console.WriteLine($"An error occurred: {ex.Message}");
+			return false;
 		}
 	}
 
@@ -583,8 +586,11 @@ internal class WeaponSynchronization
 	            // Retrieve weaponInfos for the current team
 	            var weaponInfos = teamInfo.Value;
 
-	            // Get StatTrak weapons for the current team
+	            // LANN: only weapons that ARE StatTrak in memory count kills, and only their kill COUNT is written back. The flag
+	            // belongs to the database (the 3D skin site sets it); writing the in-memory flag back undid a StatTrak toggle
+	            // the player made on the site while connected (2026-10-15, T-102).
 	            var statTrakWeapons = weaponInfos
+		            .Where(w => w.Value.StatTrak)
 		            .ToDictionary(
 			            w => w.Key, 
 			            w => (w.Value.StatTrak, w.Value.StatTrakCount) // Store both StatTrak and StatTrakCount in a tuple
@@ -601,8 +607,7 @@ internal class WeaponSynchronization
 	            {
 		            const string query = @"
 					    UPDATE `wp_player_skins` 
-					    SET `weapon_stattrak` = @StatTrak, 
-					        `weapon_stattrak_count` = @StatTrakCount
+					    SET `weapon_stattrak_count` = @StatTrakCount
 					    WHERE `steamid` = @steamid 
 					      AND `weapon_defindex` = @weaponDefIndex
 					      AND `weapon_team` = @weaponTeam";

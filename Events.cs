@@ -32,10 +32,26 @@ namespace WeaponPaints
 
 			try
 			{
+				// LANN: retry a load that could not reach the database (5, 10, 20, 40 s). Without it the player played the whole
+				// map without skins until !wp or a reconnect (PUBLIC #1, map-change reconnect bursts, 2026-10-09..14, T-102).
+				// A disconnect, or another player taking the slot, cancels the pending retries.
+				long token = Interlocked.Increment(ref _loadSeq);
+				_loadToken[playerInfo.Slot] = token;
 				_ = Task.Run(async () =>
 				{
-					await WeaponSync.GetPlayerData(playerInfo);
-					Server.NextFrame(() => RefreshAfterLoad(playerInfo));
+					for (int attempt = 0; ; attempt++)
+					{
+						if (await WeaponSync.GetPlayerData(playerInfo)) break;
+						if (attempt >= 4)
+						{
+							Logger.LogWarning($"Gave up loading {playerInfo.SteamId} after {attempt + 1} attempts; !wp or a reconnect loads it");
+							return;
+						}
+						await Task.Delay(TimeSpan.FromSeconds(5 << attempt));
+						if (!_loadToken.TryGetValue(playerInfo.Slot, out var t) || t != token) return;
+					}
+					if (_loadToken.TryGetValue(playerInfo.Slot, out var t2) && t2 == token)
+						Server.NextFrame(() => RefreshAfterLoad(playerInfo));
 				});
 				/*
 				if (Config.Additional.SkinEnabled)
@@ -77,6 +93,7 @@ namespace WeaponPaints
 			if (player is null || !player.IsValid || player.IsBot) return HookResult.Continue;
 
 			_refreshAfterLoadPending.Remove(player.Slot);
+			_loadToken.TryRemove(player.Slot, out _);
 
 			var playerInfo = new PlayerInfo
 			{
@@ -145,6 +162,9 @@ namespace WeaponPaints
 		// (MATCH #40, 2026-09-29). Anyone who spawns before their data has loaded is in the same state. Once the data is in,
 		// refresh a living player the way !wp does; between round end and round start (refresh blocked) wait for the round.
 		private readonly Dictionary<int, string> _refreshAfterLoadPending = [];
+		// per-slot load token for the retry loop in OnClientFullConnect (thread-safe: the loop runs off the main thread)
+		private readonly System.Collections.Concurrent.ConcurrentDictionary<int, long> _loadToken = new();
+		private long _loadSeq;
 
 		private void RefreshAfterLoad(PlayerInfo info)
 		{
