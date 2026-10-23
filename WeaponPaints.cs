@@ -1,10 +1,11 @@
-using System.Runtime.InteropServices;
 using CounterStrikeSharp.API;
 using CounterStrikeSharp.API.Core;
 using CounterStrikeSharp.API.Core.Attributes;
 using CounterStrikeSharp.API.Core.Attributes.Registration;
 using CounterStrikeSharp.API.Modules.Commands;
 using CounterStrikeSharp.API.Modules.Entities.Constants;
+using CounterStrikeSharp.API.Modules.Memory;
+using CounterStrikeSharp.API.Modules.Memory.DynamicFunctions;
 using Microsoft.Extensions.Logging;
 using MySqlConnector;
 
@@ -76,6 +77,16 @@ public partial class WeaponPaints : BasePlugin, IPluginConfig<WeaponPaintsConfig
 		RegisterListeners();
 	}
 
+	public override void Unload(bool hotReload)
+	{
+		// Native hook outlives the plugin's AssemblyLoadContext; without this, css_plugins reload
+		// leaves the old OnGiveNamedItemPost delegate registered and the next GiveNamedItem crashes the server.
+		if (!_giveNamedItemHooked) return;
+
+		VirtualFunctions.GiveNamedItemFunc.Unhook(OnGiveNamedItemPost, HookMode.Post);
+		_giveNamedItemHooked = false;
+	}
+
 	public void OnConfigParsed(WeaponPaintsConfig config)
 	{
 		Config = config;
@@ -83,16 +94,12 @@ public partial class WeaponPaints : BasePlugin, IPluginConfig<WeaponPaintsConfig
 
 		if (config.DatabaseHost.Length < 1 || config.DatabaseName.Length < 1 || config.DatabaseUser.Length < 1)
 		{
-			Logger.LogError("You need to setup Database credentials in \"configs/plugins/WeaponPaints/WeaponPaints.json\"!");
-			Unload(false);
-			return;
+			throw new InvalidOperationException("You need to setup Database credentials in \"configs/plugins/WeaponPaints/WeaponPaints.json\"!");
 		}
 
 		if (!File.Exists(Path.GetDirectoryName(Path.GetDirectoryName(ModuleDirectory)) + "/gamedata/weaponpaints.json"))
 		{
-			Logger.LogError("You need to upload \"weaponpaints.json\" to \"gamedata directory\"!");
-			Unload(false);
-			return;
+			throw new InvalidOperationException("You need to upload \"weaponpaints.json\" to \"gamedata directory\"!");
 		}
 		
 		var builder = new MySqlConnectionStringBuilder
@@ -107,6 +114,9 @@ public partial class WeaponPaints : BasePlugin, IPluginConfig<WeaponPaintsConfig
 		};
 
 		Database = new Database(builder.ConnectionString);
+		// Created here instead of OnMapStart: on a cold boot the first map can start before the
+		// listener is registered, leaving WeaponSync null and every command silently ignored.
+		WeaponSync = new WeaponSynchronization(Database, config);
 
 		_ = Utility.CheckDatabaseTables();
 		_localizer = Localizer;
