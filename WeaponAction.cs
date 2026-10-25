@@ -510,30 +510,36 @@ namespace WeaponPaints
 			}
 		}
 
+		internal static long MusicWrites;
+
 		private static void GivePlayerMusicKit(CCSPlayerController player)
 		{
 			if (player.IsBot) return;
 			if (!GPlayersMusic.TryGetValue(player.Slot, out var musicInfo) ||
 			    !musicInfo.TryGetValue(player.Team, out var musicId) || musicId == 0) return;
 
-			// Called every snapshot (CheckTransmit) - only write and mark fields that actually differ.
+			// Called at spawn, team change, round start, data load and round_mvp (T-140) - only write and mark fields that
+			// actually differ; MusicWrites counts those writes for css_wp_music_status.
 			var inventory = player.InventoryServices;
 			if (inventory != null && inventory.MusicID != musicId)
 			{
 				inventory.MusicID = musicId;
 				Utilities.SetStateChanged(player, "CCSPlayerController", "m_pInventoryServices");
+				Interlocked.Increment(ref MusicWrites);
 			}
 
 			if (player.MusicKitID != musicId)
 			{
 				player.MusicKitID = musicId;
 				Utilities.SetStateChanged(player, "CCSPlayerController", "m_iMusicKitID");
+				Interlocked.Increment(ref MusicWrites);
 			}
 
 			if (player.MvpNoMusic)
 			{
 				player.MvpNoMusic = false;
 				Utilities.SetStateChanged(player, "CCSPlayerController", "m_bMvpNoMusic");
+				Interlocked.Increment(ref MusicWrites);
 			}
 			// m_iMusicKitMVPs is the StatTrak MVP COUNT, not a kit id - left to the engine.
 		}

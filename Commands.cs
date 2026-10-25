@@ -107,6 +107,12 @@ public partial class WeaponPaints
 
 	private void RegisterCommands()
 	{
+		// LANN (T-140): server console only - how often the music kit fields had to be re-written.
+		AddCommand("css_wp_music_status", "Music kit writes since load (server console only)", (player, info) =>
+		{
+			if (player != null) return;
+			info.ReplyToCommand($"[WeaponPaints] music writes={Interlocked.Read(ref MusicWrites)} players_with_kit={GPlayersMusic.Count} music_enabled={Config.Additional.MusicEnabled}");
+		});
 		_config.Additional.CommandStattrak.ForEach(c =>
 		{
 			AddCommand($"css_{c}", "Stattrak toggle", (player, info) =>

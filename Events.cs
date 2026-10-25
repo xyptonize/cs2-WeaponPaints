@@ -202,6 +202,7 @@ namespace WeaponPaints
 		private HookResult OnRoundStart(EventRoundStart @event, GameEventInfo info)
 		{
 			_gBCommandsAllowed = true;
+			if (Config.Additional.MusicEnabled) ReassertMusicAll();
 			if (_refreshAfterLoadPending.Count > 0)
 			{
 				var pending = _refreshAfterLoadPending.ToArray();
@@ -223,6 +224,15 @@ namespace WeaponPaints
 		// The old code then re-fired a second round_mvp carrying the chosen kit - the MVP panel showed it, but
 		// the music was already playing, and every other plugin (LannRanks) counted the MVP twice.
 		// Nereziel/cs2-WeaponPaints#252. Now: fix the controller fields and rewrite the one event in place.
+		private HookResult OnPlayerTeamMusic(EventPlayerTeam @event, GameEventInfo info)
+		{
+			var player = @event.Userid;
+			// the kit is chosen per team, and the engine resets the fields on a team change: apply it a frame later
+			if (player is { IsValid: true, IsBot: false })
+				Server.NextFrame(() => { if (player.IsValid) GivePlayerMusicKit(player); });
+			return HookResult.Continue;
+		}
+
 		private HookResult OnRoundMvp(EventRoundMvp @event, GameEventInfo info)
 		{
 			var player = @event.Userid;
@@ -241,11 +251,11 @@ namespace WeaponPaints
 			return HookResult.Continue;
 		}
 
-		// The engine rewrites the controller's music kit fields from the real inventory on its own schedule
-		// (connect, spawn, team change, round boundary). The client reads m_iMusicKitID for the round-start,
-		// bomb and round-end cues, so re-assert the chosen kit right before every snapshot. Compare-then-write:
-		// normally a few field reads per human, a network update only when Valve reset something.
-		private void OnCheckTransmitMusic(CCheckTransmitInfoList infoList)
+		// LANN (T-140, 2026-10-25): the chosen kit is applied at the moments the engine rewrites the controller's music
+		// fields from the real inventory (spawn, team change, round start) and in the round_mvp Pre hook - NOT before
+		// every snapshot any more. On CS2 1.41.9.2 that per-snapshot re-assert (since 09-28) turned into a write +
+		// SetStateChanged every snapshot, and the owner heard the music kit playing all through the round on MATCH #38.
+		private void ReassertMusicAll()
 		{
 			if (GPlayersMusic.IsEmpty) return;
 			try
@@ -414,7 +424,7 @@ namespace WeaponPaints
 			RegisterEventHandler<EventRoundEnd>(OnRoundEnd);
 			RegisterEventHandler<EventRoundMvp>(OnRoundMvp, HookMode.Pre);
 			if (Config.Additional.MusicEnabled)
-				RegisterListener<Listeners.CheckTransmit>(OnCheckTransmitMusic);
+				RegisterEventHandler<EventPlayerTeam>(OnPlayerTeamMusic);
 			RegisterListener<Listeners.OnEntitySpawned>(OnEntityCreated);
 			RegisterEventHandler<EventPlayerDeath>(OnPlayerDeath);
 
