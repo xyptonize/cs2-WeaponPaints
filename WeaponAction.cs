@@ -336,7 +336,7 @@ namespace WeaponPaints
 							var newKnife = new CBasePlayerWeapon(player.GiveNamedItem(CsItem.Knife));
 							var newWeapon = new CBasePlayerWeapon(player.GiveNamedItem(CsItem.USP));
 							player.GiveNamedItem(CsItem.Knife);
-							player.ExecuteClientCommand("slot3");
+							if (CanTakeClientCommand(player)) player.ExecuteClientCommand("slot3");
 
 							Server.NextFrame(() =>
 							{
@@ -381,6 +381,12 @@ namespace WeaponPaints
 					}, TimerFlags.STOP_ON_MAPCHANGE);
 		}
 
+		// LANN (plugins2 f8a5014, T-135/T-140): a client command to a controller that is still valid but no longer connected
+		// (disconnecting, its pawn possibly still alive) reaches the engine without a net channel and crashes the server
+		// (Retake #3 2026-10-24 21:50). Only connected human clients get one.
+		private static bool CanTakeClientCommand(CCSPlayerController? player) =>
+			player is { IsValid: true, IsBot: false, IsHLTV: false, Connected: PlayerConnectedState.Connected };
+
 		private void GivePlayerGloves(CCSPlayerController player)
 		{
 			if (!Utility.IsPlayerValid(player) || (LifeState_t)player.LifeState != LifeState_t.LIFE_ALIVE) return;
@@ -395,7 +401,7 @@ namespace WeaponPaints
 			item.AttributeList.Attributes.RemoveAll();
 
 			//force gloves model refresh to prevent model overlap
-			player.ExecuteClientCommand("lastinv");
+			if (CanTakeClientCommand(player)) player.ExecuteClientCommand("lastinv");
 			Instance.AddTimer(0.08f, () =>
 			{	
 				try
@@ -429,7 +435,7 @@ namespace WeaponPaints
 					item.Initialized = true;
 				
 					//force gloves model refresh to prevent model overlap
-					player.ExecuteClientCommand("lastinv");
+					if (CanTakeClientCommand(player)) player.ExecuteClientCommand("lastinv");
 					SetBodygroup(pawn, "first_or_third_person", 0);
 					AddTimer(0.2f, () =>
 					{
@@ -572,7 +578,7 @@ namespace WeaponPaints
 					var newWeapon = new CBasePlayerWeapon(player.GiveNamedItem(CsItem.USP));
 					weapon.AddEntityIOEvent("Kill", weapon, null, "", 0.01f);
 					player.GiveNamedItem(CsItem.Knife);
-					player.ExecuteClientCommand("slot3");
+					if (CanTakeClientCommand(player)) player.ExecuteClientCommand("slot3");
 					newWeapon.AddEntityIOEvent("Kill", newWeapon, null, "", 0.01f);
 				}
 					

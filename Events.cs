@@ -228,7 +228,8 @@ namespace WeaponPaints
 		{
 			var player = @event.Userid;
 			// the kit is chosen per team, and the engine resets the fields on a team change: apply it a frame later
-			if (player is { IsValid: true, IsBot: false })
+			// (player_team also fires on disconnect, team 0: nothing to apply then)
+			if (!@event.Disconnect && player is { IsValid: true, IsBot: false })
 				Server.NextFrame(() => { if (player.IsValid) GivePlayerMusicKit(player); });
 			return HookResult.Continue;
 		}
